@@ -1,41 +1,74 @@
 # -*- coding: utf-8 -*-
 """
-Created on Tue Jan  8 10:15:17 2019
+Created on Thu Jan 17 23:47:04 2019
 
 @author: wuwangchuxin
 """
 
+#付息日矩阵 面值矩阵  利率矩阵 生成未来现金流 （利息加本金）
+#未来
+
 #fixed income indicators calculating
 import numpy as np
-import datetime 
+#import datetime 
 import QuantLib as ql
 #import sympy as sy
 import math
 from scipy.optimize import fsolve
+import pandas as pd
 
 # 输入
 # 债券名称、起息日、票面利率，票面利率，当前余额
 # 债券基本信息
 
+self = Bond_Profile('180210.IB','2018-07-03',100,'IB','2015-02-28','2025-02-28',
+                      2,100,1,np.nan,np.nan,1,0.0404,np.nan,np.nan,1,3,'2018-03-12',0,0)
 class Bond_Profile:
-    def __init__(self,code,faceAmount,cleanPrice,valueDate,maturity,couponRate,frequency,
-                 bondType,hasopions,exchange,standard,**kw):
-        self.code = code #债券代码
-        self.faceAmount = faceAmount #面值
-        self.cleanPrice = cleanPrice #净价 #行情软件一般得到的都是债券净价报价
-#        self.full_price = full_price #全价
-#        self.issueDate = issueDate #发行日期
-        self.valueDate = valueDate #计息日期
-        self.maturity = maturity #到期日期
-        self.couponRate = couponRate #票面利率
-        self.frequency = frequency #年付息频率(1 Annual 2 Semiannual 4 Quarterly 12 Monthly)
-#        self.interestType = interestType #利率类型（1单利，2按年复利，暂不考虑连续复利）
-        #付息类型（1固定利息按实际天数付息，2固定利息按平均值付息，3浮动利息,4到期一次还本付息,5零息债券、贴现债）
-        self.bondType = bondType 
-        self.hasopions = hasopions #是否含权债
-        self.exchange = exchange #交易市场：IB银行间 SSE交易所
-        self.standard = standard #计算基准：中债
-        self.nowdate = datetime.datetime.now().strftime('%Y-%m-%d') #d当前日期
+    def __init__(self,Code,IssueDate,IssuingPrice,Exchange,ValueDate,Maturity,Frequency,FaceAmount,
+                 PrincipalPaymentType,PrincipalPayments,DuePayment,BondType,CouponRate,CouponRateStandard,
+                 RateMargin,DaysCal,InterestType,CalDate,IsOption,IsABS,**kw):
+        '''债券基本信息，类似PrincipalPaymentType=3时，还本是不规则的情况，PrincipalPayments需要在实例化
+           时输入各期未偿还面值向量，PrincipalPaymentType取1或2时，PrincipalPayments设定为空值，比如np.nan；
+           同样的情况还适用于CouponRate，CouponRateStandard，RateMargin属性'''       
+        self.Code = Code #债券代码
+        self.IssueDate = IssueDate #发行日期
+        self.IssuingPrice = IssuingPrice #发行价格
+        self.Exchange = Exchange #交易市场：IB银行间 SSE交易所
+
+        self.ValueDate = ValueDate #计息日期
+        self.Maturity = Maturity #到期日期
+        self.Frequency = Frequency #年付息频率(1 Annual 2 Semiannual 4 Quarterly 12 Monthly)
+        
+        self.FaceAmount = FaceAmount #面值
+        self.PrincipalPaymentType = PrincipalPaymentType #还本方式：1到期一次还本；2均匀分期还本；3其它分期还本
+        self.PrincipalPayments = PrincipalPayments #其它分期还本矩阵(上一字段取值为3,本字段才有取值)
+        self.DuePayment = DuePayment #贴现债券到期兑付额
+#        if self.PrincipalPaymentType == 3:
+#           self.PrincipalPayments = eval(input('please input matrix of principal payments:'))
+        
+        #1固定利息;2浮动利息;3到期一次还本付息(国内一般为单利即利随本清，暂不考虑复利）;
+        #4零息债券（以投资额即本金为基准计算利率）、贴现债（以偿还额即本息和为基准计算利率）
+        self.BondType = BondType
+        self.CouponRate = CouponRate #固定利息、到期一次还本付息和利随本清债券利率
+        self.CouponRateStandard = CouponRateStandard #浮动利息债利率基准
+        self.RateMargin = RateMargin #浮息债利差
+#        if self.BondType in [1,3]:
+#           self.CouponRate = eval(input('please input coupon rate:')) #1和3类型的债券票面利率
+#        if self.BondType == 2:
+#           self.CouponRateStandard = eval(input('please input coupon rate standard:')) #浮息债基准
+#           self.RateMargin = eval(input('please input coupon rate margin:'))#浮息债利差
+        self.DaysCal = DaysCal #1按实际天数付息;2按平均值付息
+        self.InterestType = InterestType #利率类型（1单利，2按年复利；3按付息期复利；4连续复利；5其它）
+        
+        self.CalDate = CalDate #所要计算的日期
+#        self.CleanPrice = CleanPrice #净价
+#        self.DirtyPrice = DirtyPrice #全价
+        
+        self.IsOption = IsOption #是否含权债
+        self.IsABS = IsABS #是否资产支持证券
+#        self.Standard = Standard #计算基准：默认中债
+#        self.NowDate = datetime.datetime.now().strftime('%Y-%m-%d') #d当前日期
+        #补充自定义信息
         for info in kw:
             setattr(self,info,kw[info])
     
@@ -45,119 +78,172 @@ class Bond_Profile:
         return ql.Date(*[int(x) for x in datestr.split('-')[::-1]])
     
     def schedule(self):
-        '''返回付息日期序列'''
-        s_date = self.format_qldate(self.valueDate)
-        edate = self.format_qldate(self.maturity)
-        freq = ql.Period(self.frequency) #ql.Annual
-        if self.exchange=='IB':
-            calendar = ql.China(ql.China.IB)#时间标准 ql.China(),银行间
-        elif self.exchange=='SSE':
-            calendar = ql.China(ql.China.SSE)#交易所
-        schedule = ql.Schedule(s_date, edate, freq, calendar, ql.Following,
-                                   ql.Following, ql.DateGeneration.Forward, False)
+        '''返回付息日期序列
+           国内债券和存款计息天数调整规则默认为不调整
+           考虑月末法则'''
+        sdate = self.format_qldate(self.ValueDate)
+        edate = self.format_qldate(self.Maturity)
+        freq = ql.Period(self.Frequency) #ql.Annual
+        calendar = ql.China()
+        schedule = ql.Schedule(sdate, edate,freq,calendar,ql.Unadjusted,
+                                ql.Unadjusted,ql.DateGeneration.Forward, 
+                              ql.Date.isEndOfMonth(self.format_qldate(self.ValueDate)))        
+#        schedule = ql.Schedule(sdate, edate, freq, calendar, ql.Unadjusted,ql.Unadjusted, 
+#                                   ql.DateGeneration.Forward, False)
+#        schedule = ql.Schedule(sdate, edate, freq, calendar, ql.Following,ql.Following, 
+#                                   ql.DateGeneration.Backward, False)
         return list(schedule)
-    
-    def info_matrix(self):
-        '''计算基础指标，生成债券信息矩阵'''
-        #1 面值 2 年化利率
-        itimes = len(self.schedule())-1
-        indics = [[self.faceAmount]*itimes,[self.couponRate]*itimes] #浮息债需要重新计算
-        mat = np.zeros(shape=(len(indics),itimes))
-        for n in range(len(indics)):
-            mat[n,:] = indics[n]
-        return mat
-    
-    def date_process(self,sdate):
-        '''计算给定日期前后的关键日期'''
+   
+    def date_process(self):
+        '''计算给定日期前后的关键日期；
+           规则：ACT/ACT,给定日期距付息日实际天数除以给定日期所在债券自身付息年度的实际天数得到年化日期,
+           上述规则根据文档前述方法计算（比如应计利息表格变量含义的TY计算方法）,不同于文档附录4.2.5中关于
+           ACT/ACT的描述：属于同一计息期的闰年部分按照闰年天数计算加上属于非闰年的按非闰年的天数计算的部分'''
         date_list = self.schedule()
-        s_date = self.format_qldate(sdate)
-        date_last = [x for x in date_list if x<s_date][-1] #上次付息日
-        date_next = date_list[date_list.index(date_last)+1] #下次付息日
-        unpay_date1 = [x for x in date_list if x>s_date] #剩余付息日 #+ql.Period(-1,ql.Years)
-        unpay_date2 = date_list[date_list.index(unpay_date1[0])-self.frequency:] #添加最近一个付息日前推一年
+        caldate = self.format_qldate(self.CalDate)  #给定日期
+        date_last = [x for x in date_list if x<caldate][-1] #给定日期上次付息日
+        date_next = date_list[date_list.index(date_last)+1] #给定日期下次付息日
+        unpay_date1 = [x for x in date_list if x>caldate] #剩余付息日 #+ql.Period(-1,ql.Years)
+        unpay_date2 = date_list[date_list.index(unpay_date1[0])-self.Frequency:] #添加最近一个付息日前推一年
+        year_ord = sorted(list(range(1,int((len(date_list)-1)/self.Frequency+1)))*self.Frequency) #计息年度序列
+        year_days = []  #所在付息年度的天数
+        for ny in range(1,max(year_ord)+1):
+            mid_res = date_list[ny*self.Frequency]-date_list[(ny-1)*self.Frequency]
+            year_days+=[mid_res]*self.Frequency
+        period_days = np.array(date_list[1:])-np.array(date_list[:-1]) #所在付息区间天数        
+        year_interval = [x for x in period_days/year_days] #付息日之间年化时间
+        ord_tmp = date_list[1:].index(date_next)
+        next_interval = (date_next - caldate)/year_days[ord_tmp] #caldate距下次付息日年化时间
+        last_interval = (caldate - date_last)/year_days[ord_tmp] #caldate距上次付息日年化时间
         #计算给定日期所在的计息年份
-        date_year = [x for x in date_list if x.year() ==s_date.year()]
-        #考虑年终或者年初的假期对利息计算年份的选择的影响
-        if s_date<date_year[0]:
-            date_syear=[x for x in date_list if x.year() ==(s_date.year()-1)]
-        elif s_date>date_year[-1]:
-            date_syear=[x for x in date_list if x.year() ==(s_date.year()+1)]
-        else:
-            date_syear = date_year
-        #考虑年终或者年初的假期对利息计算年份天数的付息区间选择
-        if date_syear[-1] == date_list[-1]:
-            year_days = date_list[-1]-date_list[-1-self.frequency]
-        elif date_syear[0] == date_list[0]:
-            year_days = date_list[self.frequency]-date_list[0]
-        else:
-            if len(date_syear)<self.frequency:
-                year_days=date_list[date_list.index(date_syear[-1])+1]-\
-                                   date_list[date_list.index(date_syear[0])-1]
-            elif len(date_syear)>self.frequency:
-                year_days=date_syear[-1]-date_syear[0]
-            else:
-                if date_syear[0].month()==1:
-                    year_days=date_list[date_list.index(date_syear[-1])+1]-date_syear[0]
-                else:
-                    year_days=date_syear[-1]-date_list[date_list.index(date_syear[0])-1]
-        return {'date_last':date_last,'date_next':date_next,'unpay_date1':unpay_date1,
-                'unpay_date2':unpay_date2,'year_days':year_days}
+        caldate_year_ord = year_ord[date_list[1:].index(date_next)] #所在计息年份序数
+        caldate_year_days = year_days[date_list[1:].index(date_next)] #所在计息年份天数
         
-    def accrued_interest(self,sdate):
-        '''应计利息'''
-        #我国债券主要用ACT/ACT（银行间市场，交易所市场的贴现债券），NL/365（交易所市场的非贴现债券）
+        #指定日期距离各付息日的年化时间
+        index_nextpd = date_list[1:].index(date_next)
+        caldate_interval = [0]*(len(date_list)-1)
+        #向后的时间
+        for cdy in range(index_nextpd,len(date_list)-1):
+                caldate_interval[cdy] = next_interval+sum(year_interval[index_nextpd+1:cdy+1])
+        #向前的时间
+        for cdy2 in list(range(index_nextpd))[::-1]:
+                caldate_interval[cdy2] = -(last_interval+sum(year_interval[cdy2+1:index_nextpd]))
+                
+        return {'date_last':date_last,'date_next':date_next,'unpay_date1':unpay_date1,
+                'unpay_date2':unpay_date2,'year_ord':year_ord,'year_days':year_days,
+                'period_days':list(period_days),'caldate_year_ord':caldate_year_ord,
+                'caldate_year_days':caldate_year_days,'year_interval':year_interval,
+                'next_interval':next_interval,'last_interval':last_interval,
+                'caldate_interval':caldate_interval}
+
+    def info_df(self):
+        '''计算基础指标，生成债券信息dataframe'''
+        #1付息日;2面值;3年化利率;4未来现金流;
         date_list = self.schedule()
-        mat_i = self.info_matrix()
-        s_date = self.format_qldate(sdate)
-        date_last = self.date_process(sdate)['date_last']
-        date_next = self.date_process(sdate)['date_next']
-        location = date_list.index(date_next)-1
-        if self.exchange == 'IB' or (self.exchange == 'EXC' and self.bondType == 5):
-            fac = (s_date-date_last)/self.date_process(sdate)['year_days']           
-            return mat_i[0,location]*mat_i[1,location]*fac 
-        else:
-            try:
-                ql.Date(29,2,date_last.year())
-            except RuntimeError:
-                try:
-                    ql.Date(29,2,date_next.year())
-                except RuntimeError:
-                    fac = (s_date-date_last)/365
-                    return mat_i[0,location]*mat_i[1,location]*fac
-                else:
-                    if date_last<=ql.Date(29,2,date_next.year())<=date_next:
-                        fac = (s_date-date_last-1)/365
-                        return mat_i[0,location]*mat_i[1,location]*fac
-                    else:
-                        fac = (s_date-date_last)/365
-                        return mat_i[0,location]*mat_i[1,location]*fac
-            else:
-                if date_last<=ql.Date(29,2,date_last.year())<=date_next:
-                    fac = (s_date-date_last-1)/365
-                    return mat_i[0,location]*mat_i[1,location]*fac
-                else:
-                    fac = (s_date-date_last)/365
-                    return mat_i[0,location]*mat_i[1,location]*fac
+        itimes = len(date_list)-1
+        schedule_vec = date_list[-itimes:] #所有付息日序列
+        caldate_dic = self.date_process()
+        year_interval_vec = caldate_dic['year_interval'] #付息日间年化时间间隔
+        caldate_interval_vec = caldate_dic['caldate_interval'] #指定日期距离各付息日年化时间
             
-    def FV(self,sdate):
+        #剩余面值为付息日截止前，因为当日偿还本金后下一付息周期才不用偿还这部分本金产生的利息
+        if self.PrincipalPaymentType == 1:
+            FaceAmount_vec = [*[self.FaceAmount]*(itimes-1),0]
+        elif self.PrincipalPaymentType == 2:
+            every_amount = self.FaceAmount/itimes
+            mid_vec = []
+            for ni in range(1,itimes+1):
+                mid_vec.append(self.FaceAmount-every_amount*ni)
+            FaceAmount_vec = mid_vec
+        else:
+            FaceAmount_vec = self.PrincipalPayments
+        #利率向量
+        if self.BondType in [1,3]:
+            CouponRate_vec = [self.CouponRate]*itimes
+        elif self.BondType == 2:
+            CouponRate_vec = np.array(self.CouponRateStandard) + np.array(self.RateMargin)
+        else:
+            CouponRate_vec = [0]*itimes
+        FaceAmount_vec_adj = np.array([self.FaceAmount,*FaceAmount_vec[:-1]])
+        InterestFlow_vec=list(np.array(CouponRate_vec)*FaceAmount_vec_adj*np.array(year_interval_vec))
+        FaceAmountFlow_vec = list(FaceAmount_vec_adj-np.array(FaceAmount_vec))
+        CashFlow_vec = list(np.array(FaceAmountFlow_vec) + np.array(InterestFlow_vec))
+        return pd.DataFrame([schedule_vec,year_interval_vec,caldate_interval_vec,caldate_dic['year_ord'],
+                             caldate_dic['year_days'],caldate_dic['period_days'],FaceAmount_vec,
+                             CouponRate_vec,InterestFlow_vec,FaceAmountFlow_vec,CashFlow_vec],
+                             index=['DateList','YearInterval','CaldateInterval','YearOrd','YearDays',
+                                    'PeriodDays','FaceAmount','CouponRate','InterestFlow',
+                                    'FaceAmountFlow','CashFlows'],
+                             columns=range(1,itimes+1))
+        
+    def accrued_interest(self):
+        '''应计利息'''
+        #我国债券主要用ACT/ACT（银行间市场，交易所市场的贴现债券），NL/365（交易所市场的非贴现债券）        
+        date_list = self.schedule()[1:]
+        df_i = self.info_df() #test = df_i.iloc[1:,:]
+        caldate = self.format_qldate(self.CalDate)
+        date_next = self.date_process()['date_next']
+
+        col_name_caldate = date_list.index(date_next)+1
+        if self.Exchange == 'IB':
+            if self.BondType in (1,2) or self.IsABS==1:
+                C_ind = df_i.loc['CouponRate',col_name_caldate]*100 #每百元面值年利息
+                t_ind = caldate-self.date_process()['date_last']#起息日或上一付息日至估值日的实际天数
+                TY_ind = df_i.loc['YearDays',col_name_caldate]#本付息周期所在计息年度的实际天数
+                TS_ind = df_i.loc['PeriodDays',col_name_caldate]#本付息周期的实际天数
+                m_ind = df_i.loc['FaceAmount',col_name_caldate]#百元面值当前剩余本金值
+                if self.Frequency == 1:
+                    return (C_ind/TS_ind)*t_ind*(m_ind/100)
+                elif self.Frequency>1 and self.DaysCal==1:
+                    return (C_ind/TY_ind)*t_ind*(m_ind/100)
+                elif self.Frequency>1 and self.DaysCal==2:
+                    return (C_ind/self.Frequency)*(t_ind/TS_ind)*(m_ind/100)
+            elif self.BondType == 3:
+                mid_y = range(1,col_name_caldate)
+                return sum(df_i.loc['CouponRate',mid_y]*df_i.loc['YearInterval',mid_y]*100)+\
+                         (-df_i.loc['CouponRate',col_name_caldate]*
+                           df_i.loc['CaldateInterval',col_name_caldate-1]*100)
+            elif self.BondType == 4:
+                M_ind = self.DuePayment
+                pd_ind = self.IssuingPrice
+                T_ind = self.schedule()[-1]-self.schedule()[0]
+                t_ind = caldate-self.schedule()[0]
+                return (M_ind-pd_ind)*t_ind/T_ind
+        elif self.Exchange == 'SSE':
+            if self.BondType in (1,2,3) or self.IsABS==1:
+                C_ind = df_i.loc['CouponRate',col_name_caldate]*100
+                if self.BondType==3:
+                    t_ind = caldate-self.schedule()[0]
+                else:
+                    t_ind = caldate-self.date_process()['date_last']
+                m_ind = df_i.loc['FaceAmount',col_name_caldate]
+                return (C_ind/365)*t_ind*(m_ind/100)
+            elif self.BondType==4:
+                M_ind = self.DuePayment
+                pd_ind = self.IssuingPrice
+                T_ind = self.schedule()[-1]-self.schedule()[0]
+                t_ind = caldate-self.schedule()[0]
+                return (M_ind-pd_ind)*t_ind/T_ind
+            
+    def FV(self):
         '''计算到期兑付日债券本息和'''
-        s_date = self.format_qldate(sdate)
+        s_date = self.format_qldate(self.CalDate)
         pay_dates = self.schedule()
-        info_mat = self.info_matrix()
+        df_i = self.info_df()
         if s_date>pay_dates[-1] or s_date<pay_dates[0]:
             raise ValueError('date NotStarted or OutofDate')
         else:
-            unpay_date2 = self.date_process(sdate)['unpay_date2']
+            unpay_date2 = self.date_process()['unpay_date2']
 #            lyear_days = unpay_date2[1]-unpay_date2[0] #付息期当年实际天数
 #            remaining_days = unpay_date2[1]-s_date
             #1.	对于处于最后付息周期的固定利率债券、待偿期在一年及以内的到期一次还本付息债券和零息债券、贴现债
             #2.	对待偿期在一年以上的到期一次还本付息债券和零息债券，到期收益率按复利计算。
             ##非浮息债券
-            if (unpay_date2[-2]<=s_date<unpay_date2[-1] and (self.bondType == 1 or self.bondType == 2))\
-               or (self.bondType == 4 or self.bondType == 5):
+            if (unpay_date2[-2]<=s_date<unpay_date2[-1] and self.bondType == 1)\
+               or (self.bondType == 3 or self.bondType == 4):
                 #付息周期等于一年的固定利率债券为M+C
-                if self.frequency == 1 and (self.bondType == 1 or self.bondType == 2):
-                    return info_mat[0,-1]*(1+info_mat[1,-1])
+                if self.frequency == 1 and self.bondType == 1:
+                    return df_i.iloc[0,-1]*(1+info_mat[1,-1])
                 #付息周期小于一年且按实际天数付息的固定利率债券
                 elif self.frequency>1 and self.bondType == 1:
                     return info_mat[0,-1]+info_mat[0,-1]*info_mat[1,-1]*\
@@ -426,3 +512,7 @@ if __name__=='__main__':
     bond_plus = {'market_value':[500,380],'cost':[0.4,0.35]}
     
     print (indicates_result.port_bonds(bond_list,bond_plus))
+    
+
+
+
