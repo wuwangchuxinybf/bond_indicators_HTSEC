@@ -21,12 +21,12 @@ import pandas as pd
 # 债券名称、起息日、票面利率，票面利率，当前余额
 # 债券基本信息
 
-self = Bond_Profile('180210.IB','2018-07-03',100,'IB','2015-02-28','2025-02-28',
-                      2,100,1,np.nan,np.nan,1,0.0404,np.nan,np.nan,1,3,'2018-03-12',0,0)
+self = Bond_Profile('180210.IB','2018-07-03',100,'IB','2015-02-28','2025-02-28',2,100,1,
+                        np.nan,np.nan,1,0.0404,np.nan,np.nan,1,3,'2018-03-12',103.20,0,0)
 class Bond_Profile:
     def __init__(self,Code,IssueDate,IssuingPrice,Exchange,ValueDate,Maturity,Frequency,FaceAmount,
                  PrincipalPaymentType,PrincipalPayments,DuePayment,BondType,CouponRate,CouponRateStandard,
-                 RateMargin,DaysCal,InterestType,CalDate,IsOption,IsABS,**kw):
+                 RateMargin,DaysCal,InterestType,CalDate,CleanPrice,IsOption,IsABS,**kw):
         '''债券基本信息，类似PrincipalPaymentType=3时，还本是不规则的情况，PrincipalPayments需要在实例化
            时输入各期未偿还面值向量，PrincipalPaymentType取1或2时，PrincipalPayments设定为空值，比如np.nan；
            同样的情况还适用于CouponRate，CouponRateStandard，RateMargin属性'''       
@@ -61,7 +61,7 @@ class Bond_Profile:
         self.InterestType = InterestType #利率类型（1单利，2按年复利；3按付息期复利；4连续复利；5其它）
         
         self.CalDate = CalDate #所要计算的日期
-#        self.CleanPrice = CleanPrice #净价
+        self.CleanPrice = CleanPrice #净价
 #        self.DirtyPrice = DirtyPrice #全价
         
         self.IsOption = IsOption #是否含权债
@@ -171,8 +171,8 @@ class Bond_Profile:
         return pd.DataFrame([schedule_vec,year_interval_vec,caldate_interval_vec,caldate_dic['year_ord'],
                              caldate_dic['year_days'],caldate_dic['period_days'],FaceAmount_vec,
                              CouponRate_vec,InterestFlow_vec,FaceAmountFlow_vec,CashFlow_vec],
-                             index=['DateList','YearInterval','CaldateInterval','YearOrd','YearDays',
-                                    'PeriodDays','FaceAmount','CouponRate','InterestFlow',
+                             index=['DateList','YearInterval','CaldateInterval_back','YearOrd','YearDays',
+                                    'PeriodDays','FaceAmount_back','CouponRate','InterestFlow',
                                     'FaceAmountFlow','CashFlows'],
                              columns=range(1,itimes+1))
         
@@ -187,17 +187,26 @@ class Bond_Profile:
         col_name_caldate = date_list.index(date_next)+1
         if self.Exchange == 'IB':
             if self.BondType in (1,2) or self.IsABS==1:
-                C_ind = df_i.loc['CouponRate',col_name_caldate]*100 #每百元面值年利息
-                t_ind = caldate-self.date_process()['date_last']#起息日或上一付息日至估值日的实际天数
-                TY_ind = df_i.loc['YearDays',col_name_caldate]#本付息周期所在计息年度的实际天数
-                TS_ind = df_i.loc['PeriodDays',col_name_caldate]#本付息周期的实际天数
-                m_ind = df_i.loc['FaceAmount',col_name_caldate]#百元面值当前剩余本金值
-                if self.Frequency == 1:
-                    return (C_ind/TS_ind)*t_ind*(m_ind/100)
-                elif self.Frequency>1 and self.DaysCal==1:
-                    return (C_ind/TY_ind)*t_ind*(m_ind/100)
+#                C_ind = df_i.loc['CouponRate',col_name_caldate]*100 #每百元面值年利息
+#                t_ind = caldate-self.date_process()['date_last']#起息日或上一付息日至估值日的实际天数
+#                TY_ind = df_i.loc['YearDays',col_name_caldate]#本付息周期所在计息年度的实际天数
+#                TS_ind = df_i.loc['PeriodDays',col_name_caldate]#本付息周期的实际天数
+#                if self.Frequency == 1:
+#                    return (C_ind/TS_ind)*t_ind*(m_ind/100)
+#                elif self.Frequency>1 and self.DaysCal==1:
+#                    return (C_ind/TY_ind)*t_ind*(m_ind/100)
+#                elif self.Frequency>1 and self.DaysCal==2:
+#                    return (C_ind/self.Frequency)*(t_ind/TS_ind)*(m_ind/100)
+                if col_name_caldate==1:
+                    m_ind = self.FaceAmount
+                else:
+                    m_ind = df_i.loc['FaceAmount_back',col_name_caldate-1]#百元面值当前剩余本金值
+                if self.Frequency == 1 or (self.Frequency>1 and self.DaysCal==1):
+                    return df_i.loc['CouponRate',col_name_caldate]*(caldate-\
+                            self.date_process()['date_last'])/df_i.loc['YearDays',col_name_caldate]*m_ind
                 elif self.Frequency>1 and self.DaysCal==2:
-                    return (C_ind/self.Frequency)*(t_ind/TS_ind)*(m_ind/100)
+                    return df_i.loc['CouponRate',col_name_caldate]/self.Frequency*(caldate-\
+                            self.date_process()['date_last'])/df_i.loc['PeriodDays',col_name_caldate]*m_ind
             elif self.BondType == 3:
                 mid_y = range(1,col_name_caldate)
                 return sum(df_i.loc['CouponRate',mid_y]*df_i.loc['YearInterval',mid_y]*100)+\
@@ -216,7 +225,10 @@ class Bond_Profile:
                     t_ind = caldate-self.schedule()[0]
                 else:
                     t_ind = caldate-self.date_process()['date_last']
-                m_ind = df_i.loc['FaceAmount',col_name_caldate]
+                if col_name_caldate==1:
+                    m_ind = self.FaceAmount
+                else:
+                    m_ind = df_i.loc['FaceAmount_back',col_name_caldate-1]#百元面值当前剩余本金值
                 return (C_ind/365)*t_ind*(m_ind/100)
             elif self.BondType==4:
                 M_ind = self.DuePayment
@@ -225,69 +237,79 @@ class Bond_Profile:
                 t_ind = caldate-self.schedule()[0]
                 return (M_ind-pd_ind)*t_ind/T_ind
             
+#    def FV(self):
+#        '''计算到期兑付日债券本息和'''
+#        s_date = self.format_qldate(self.CalDate)
+#        pay_dates = self.schedule()
+#        df_i = self.info_df()
+#        if s_date>pay_dates[-1] or s_date<pay_dates[0]:
+#            raise ValueError('date NotStarted or OutofDate')
+#        else:
+#            unpay_date2 = self.date_process()['unpay_date2']
+##            lyear_days = unpay_date2[1]-unpay_date2[0] #付息期当年实际天数
+##            remaining_days = unpay_date2[1]-s_date
+#            #1.	对于处于最后付息周期的固定利率债券、待偿期在一年及以内的到期一次还本付息债券和零息债券、贴现债
+#            #2.	对待偿期在一年以上的到期一次还本付息债券和零息债券，到期收益率按复利计算。
+#            ##非浮息债券
+#            if (unpay_date2[-2]<=s_date<unpay_date2[-1] and self.BondType == 1)\
+#               or (self.BondType == 3 or self.BondType == 4):
+#                #付息周期等于一年的固定利率债券为M+C
+#                if self.frequency == 1 and self.BondType == 1:
+#                    return df_i.iloc[0,-1]*(1+info_mat[1,-1])
+#                #付息周期小于一年且按实际天数付息的固定利率债券
+#                elif self.frequency>1 and self.bondType == 1:
+#                    return info_mat[0,-1]+info_mat[0,-1]*info_mat[1,-1]*\
+#                         ((pay_dates[-1]-pay_dates[-2])/(pay_dates[-1]-unpay_date2[-1-self.frequency]))
+#                #付息周期小于一年且按平均值付息的固定利率债券
+#                elif self.frequency>1 and self.bondType == 2:
+#                    return info_mat[0,-1]+info_mat[0,-1]*info_mat[1,-1]/self.frequency
+#                #到期一次还本付息债券
+#                elif self.bondType == 4:
+#                    return info_mat[0,0]+sum(np.multiply(info_mat[0],info_mat[1]))
+#                #零息债券和贴现债
+#                elif self.bondType == 5:
+#                    return info_mat[0,0]
+#            else:
+#                raise ValueError('no need for calculating FV')
+#            #3.	对不处于最后付息周期的固定利率债券，到期收益率按复利计算。无需计算FV
+#            #4.	分次兑付债券.无需计算FV
+#            ##浮息债券
     def FV(self):
         '''计算到期兑付日债券本息和'''
-        s_date = self.format_qldate(self.CalDate)
-        pay_dates = self.schedule()
-        df_i = self.info_df()
-        if s_date>pay_dates[-1] or s_date<pay_dates[0]:
-            raise ValueError('date NotStarted or OutofDate')
-        else:
-            unpay_date2 = self.date_process()['unpay_date2']
-#            lyear_days = unpay_date2[1]-unpay_date2[0] #付息期当年实际天数
-#            remaining_days = unpay_date2[1]-s_date
-            #1.	对于处于最后付息周期的固定利率债券、待偿期在一年及以内的到期一次还本付息债券和零息债券、贴现债
-            #2.	对待偿期在一年以上的到期一次还本付息债券和零息债券，到期收益率按复利计算。
-            ##非浮息债券
-            if (unpay_date2[-2]<=s_date<unpay_date2[-1] and self.bondType == 1)\
-               or (self.bondType == 3 or self.bondType == 4):
-                #付息周期等于一年的固定利率债券为M+C
-                if self.frequency == 1 and self.bondType == 1:
-                    return df_i.iloc[0,-1]*(1+info_mat[1,-1])
-                #付息周期小于一年且按实际天数付息的固定利率债券
-                elif self.frequency>1 and self.bondType == 1:
-                    return info_mat[0,-1]+info_mat[0,-1]*info_mat[1,-1]*\
-                         ((pay_dates[-1]-pay_dates[-2])/(pay_dates[-1]-unpay_date2[-1-self.frequency]))
-                #付息周期小于一年且按平均值付息的固定利率债券
-                elif self.frequency>1 and self.bondType == 2:
-                    return info_mat[0,-1]+info_mat[0,-1]*info_mat[1,-1]/self.frequency
-                #到期一次还本付息债券
-                elif self.bondType == 4:
-                    return info_mat[0,0]+sum(np.multiply(info_mat[0],info_mat[1]))
-                #零息债券和贴现债
-                elif self.bondType == 5:
-                    return info_mat[0,0]
-            else:
-                raise ValueError('no need for calculating FV')
-            #3.	对不处于最后付息周期的固定利率债券，到期收益率按复利计算。无需计算FV
-            #4.	分次兑付债券.无需计算FV
-            ##浮息债券
-            
-    def PV(self,sdate):
+        return self.info_df().iloc[-1,-1]
+    
+    def PV(self):
         '''债券全价'''
-        s_date = self.format_qldate(sdate)
-        pay_dates = self.schedule()
-        info_mat = self.info_matrix()
-        date_last = self.date_process(sdate)['date_last']
-        date_next = self.date_process(sdate)['date_next']
-        year_days = self.date_process(sdate)['year_days']
-        fac = (s_date-date_last)/year_days #ACT/ACT
-        return self.cleanPrice+self.faceAmount*info_mat[1, pay_dates.index(date_next)-1]*fac
+        return self.CleanPrice+self.accrued_interest()
+#        caldate = self.format_qldate(self.CalDate)
+#        date_pro = self.date_process()
+#        pay_dates = self.schedule()
+#        df_i = self.info_df()
+#        date_last = date_pro['date_last']
+#        date_next = date_pro['date_next']
+#        year_days = date_pro['year_days']
+#        fac = (caldate-date_last)/year_days #ACT/ACT
+#        return self.cleanPrice+self.faceAmount*info_mat[1, pay_dates.index(date_next)-1]*fac
         
-    def YTM(self,sdate):
+    def YTM(self):
         '''到期收益率'''
-        s_date = self.format_qldate(sdate)
+        caldate = self.format_qldate(self.CalDate)
         pay_dates = self.schedule()
-        date_last = self.date_process(sdate)['date_last']
-        date_next = self.date_process(sdate)['date_next']
-        unpay_date1 = self.date_process(sdate)['unpay_date1']
-        unpay_date2 = self.date_process(sdate)['unpay_date2']
-        year_days = self.date_process(sdate)['year_days']
-        if (unpay_date2[-2]<s_date<=unpay_date2[-1] and (self.bondType == 1 or self.bondType == 2))\
-               or ((self.bondType == 4 or self.bondType == 5) and s_date>=unpay_date2[-1-self.frequency]):
-            return ((self.FV(sdate)-self.PV(sdate))/self.PV(sdate))/((pay_dates[-1]-\
-                   s_date)/year_days)
-        elif (self.bondType == 4 or self.bondType == 5) and s_date<unpay_date2[-1-self.frequency]:
+        date_pro = self.date_process()
+        date_last = date_pro['date_last']
+        date_next = date_pro['date_next']
+        unpay_date1 = date_pro['unpay_date1']
+        unpay_date2 = date_pro['unpay_date2']
+        df_i = self.info_df()
+        df_i.iloc[0,-1-self.Frequency]
+        df_i.iloc[0,-1]
+        mid_index = pay_dates[1:].index(date_next)
+#        year_days = date_pro['year_days']
+        if (df_i.iloc[0,-2]<caldate<=df_i.iloc[0,-1] and self.BondType == 1)\
+               or ((self.BondType == 4 or self.BondType == 5) and
+                          df_i.iloc[0,-1-self.Frequency]<=caldate<df_i.iloc[0,-1]):
+            return ((self.FV()-self.PV())/self.PV())/((pay_dates[-1]-caldate)/df_i.iloc[4,-1])               
+        elif (self.BondType == 3 or self.BondType == 4) and caldate<df_i.iloc[0,-1-self.Frequency]:
 #            效率低下的方程求解
 #            ytm_res=sy.Symbol('ytm_res')
 #            year_num = math.floor((len(unpay_date1)-1)/self.frequency)
@@ -295,14 +317,14 @@ class Bond_Profile:
 #                    (unpay_date1[-1-self.frequency*year_num]-s_date)/year_days+year_num)),ytm_res)
 #            return res
             #效率高很多的非线性方程求解
-            year_num = math.floor((len(unpay_date1)-1)/self.frequency)
+            year_num = df_i.iloc[3,-1]-df_i.iloc[3,mid_index]
+#            year_num = math.floor((len(unpay_date1)-1)/self.frequency)
             def f1(x):
-                return self.PV(sdate) - self.FV(sdate)/((1+x)**(
-                         (unpay_date1[-1-self.frequency*year_num]-s_date)/year_days+year_num))
+                return self.PV()-self.FV()/((1+x)**((date_next-caldate)/df_i.iloc[4,mid_index]+year_num))
             res = fsolve(f1,[1])
             #误差为：f1(res)
             return res[0]
-        elif s_date<=unpay_date2[-2] and (self.bondType == 1 or self.bondType == 2):
+        elif caldate<=df_i.iloc[0,-2] and self.bondType == 1:
             def f2(x):
                 mid_equal = 0
                 for n in range(len(unpay_date1)): 
