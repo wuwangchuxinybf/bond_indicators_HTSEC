@@ -13,7 +13,7 @@ import numpy as np
 #import datetime 
 import QuantLib as ql
 #import sympy as sy
-import math
+#import math
 from scipy.optimize import fsolve
 import pandas as pd
 
@@ -21,8 +21,8 @@ import pandas as pd
 # 债券名称、起息日、票面利率，票面利率，当前余额
 # 债券基本信息
 
-self = Bond_Profile('180210.IB','2018-07-03',100,'IB','2015-02-28','2025-02-28',2,100,1,
-                        np.nan,np.nan,1,0.0404,np.nan,np.nan,1,3,'2018-03-12',103.20,0,0)
+#self = Bond_Profile('180210.IB','2018-07-03',100,'IB','2015-02-28','2025-02-28',2,100,1,
+#                        np.nan,np.nan,1,0.0404,np.nan,np.nan,1,3,'2018-03-12',103.20,0,0)
 class Bond_Profile:
     def __init__(self,Code,IssueDate,IssuingPrice,Exchange,ValueDate,Maturity,Frequency,FaceAmount,
                  PrincipalPaymentType,PrincipalPayments,DuePayment,BondType,CouponRate,CouponRateStandard,
@@ -299,14 +299,12 @@ class Bond_Profile:
         date_last = date_pro['date_last']
         date_next = date_pro['date_next']
         unpay_date1 = date_pro['unpay_date1']
-        unpay_date2 = date_pro['unpay_date2']
         df_i = self.info_df()
-        df_i.iloc[0,-1-self.Frequency]
-        df_i.iloc[0,-1]
+        
         mid_index = pay_dates[1:].index(date_next)
-#        year_days = date_pro['year_days']
-        if (df_i.iloc[0,-2]<caldate<=df_i.iloc[0,-1] and self.BondType == 1)\
-               or ((self.BondType == 4 or self.BondType == 5) and
+        
+        if (df_i.iloc[0,-2]<caldate<=df_i.iloc[0,-1] and (self.BondType == 1 or self.BondType == 2)\
+               or ((self.BondType == 3 or self.BondType == 4) and
                           df_i.iloc[0,-1-self.Frequency]<=caldate<df_i.iloc[0,-1]):
             return ((self.FV()-self.PV())/self.PV())/((pay_dates[-1]-caldate)/df_i.iloc[4,-1])               
         elif (self.BondType == 3 or self.BondType == 4) and caldate<df_i.iloc[0,-1-self.Frequency]:
@@ -318,24 +316,45 @@ class Bond_Profile:
 #            return res
             #效率高很多的非线性方程求解
             year_num = df_i.iloc[3,-1]-df_i.iloc[3,mid_index]
-#            year_num = math.floor((len(unpay_date1)-1)/self.frequency)
             def f1(x):
                 return self.PV()-self.FV()/((1+x)**((date_next-caldate)/df_i.iloc[4,mid_index]+year_num))
-            res = fsolve(f1,[1])
+            res = fsolve(f1,[0.03])
             #误差为：f1(res)
             return res[0]
-        elif caldate<=df_i.iloc[0,-2] and self.bondType == 1:
-            def f2(x):
+        elif caldate<=df_i.iloc[0,-2] and (self.BondType == 1 or self.BondType == 2):
+            #用向量的方法没有得出解
+#            def f2(x2):
+#                C_div_f = np.array(list(df_i.loc['CashFlows',mid_index+1:]))
+#                one_plus_y_div_f = np.array([1+x2/self.Frequency]*len(unpay_date1))
+#                d_arr = np.array([date_next-caldate]*len(unpay_date1))
+#                TS1 = np.array([df_i.loc['PeriodDays',mid_index+1]]*len(unpay_date1))
+#                n_arr = np.array(range(len(unpay_date1)))
+#                mid_res = C_div_f/(one_plus_y_div_f**(d_arr/TS1+n_arr))
+#                return self.PV()-sum(mid_res)            
+#            res2 = fsolve(f2,[0.03])
+#            def f2(x2):
+#                mid_equal = 0
+#                for n in range(len(unpay_date1)):                     
+#                    mid_equal += (self.FaceAmount*self.CouponRate/self.Frequency)/((
+#                            1+x2/self.Frequency)**((date_next-caldate)/(date_next-date_last)+n))
+#                return self.PV()-mid_equal-self.FaceAmount/((1+x2/self.Frequency\
+#                                 )**((date_next-caldate)/(date_next-date_last)+len(unpay_date1)-1))
+#            res2 = fsolve(f2,[0])
+#            return res2[0]
+            def f2(x2):
                 mid_equal = 0
-                for n in range(len(unpay_date1)): 
-                    mid_equal += (self.faceAmount*self.couponRate/self.frequency)/((
-                            1+x/self.frequency)**((date_next-s_date)/(date_next-date_last)+n))
-                return self.PV(sdate)-mid_equal-self.faceAmount/((1+x/self.frequency\
-                                 )**((date_next-s_date)/(date_next-date_last)+len(unpay_date1)-1))
+                for n in range(len(unpay_date1)):
+                    C_div_f = df_i.loc['FaceAmount_back',mid_index+n]*\
+                                df_i.loc['CouponRate',mid_index+1+n]/self.Frequency
+                    d_div_TS1 = (date_next-caldate)/(date_next-date_last)                
+                    mid_equal += C_div_f/((1+x2/self.Frequency)**(d_div_TS1+n))
+                    
+                return self.PV()-mid_equal-df_i.iloc[6,-2]/((1+x2/self.Frequency\
+                                   )**(d_div_TS1+len(unpay_date1)-1))
             res2 = fsolve(f2,[0])
             return res2[0]
         else:
-            #其它类型债券（分次兑付债券，浮动利率债券）
+            #其它类型债券（分次兑付债券）
             pass
 
     def duration(self,sdate):
