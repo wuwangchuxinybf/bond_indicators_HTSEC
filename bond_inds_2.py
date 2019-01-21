@@ -21,15 +21,16 @@ import pandas as pd
 # 债券名称、起息日、票面利率，票面利率，当前余额
 # 债券基本信息
 
-#self = Bond_Profile('180210.IB','2018-07-03',100,'IB','2015-02-28','2025-02-28',2,100,1,
-#                        np.nan,np.nan,1,0.0404,np.nan,np.nan,1,3,'2018-03-12',103.20,0,0)
+#self = Bond_Profile('2018-03-12','180210.IB','2018-07-03',100,'IB','2015-02-28','2025-02-28',2,100,1,
+#                        np.nan,np.nan,1,0.0404,np.nan,np.nan,1,3,103.20,0,0)
 class Bond_Profile:
-    def __init__(self,Code,IssueDate,IssuingPrice,Exchange,ValueDate,Maturity,Frequency,FaceAmount,
+    def __init__(self,CalDate,Code,IssueDate,IssuingPrice,Exchange,ValueDate,Maturity,Frequency,FaceAmount,
                  PrincipalPaymentType,PrincipalPayments,DuePayment,BondType,CouponRate,CouponRateStandard,
-                 RateMargin,DaysCal,InterestType,CalDate,CleanPrice,IsOption,IsABS,**kw):
+                 RateMargin,DaysCal,InterestType,CleanPrice,IsOption,IsABS,**kw):
         '''债券基本信息，类似PrincipalPaymentType=3时，还本是不规则的情况，PrincipalPayments需要在实例化
            时输入各期未偿还面值向量，PrincipalPaymentType取1或2时，PrincipalPayments设定为空值，比如np.nan；
            同样的情况还适用于CouponRate，CouponRateStandard，RateMargin属性'''       
+        self.CalDate = CalDate #所要计算的日期
         self.Code = Code #债券代码
         self.IssueDate = IssueDate #发行日期
         self.IssuingPrice = IssuingPrice #发行价格
@@ -60,7 +61,7 @@ class Bond_Profile:
         self.DaysCal = DaysCal #1按实际天数付息;2按平均值付息
         self.InterestType = InterestType #利率类型（1单利，2按年复利；3按付息期复利；4连续复利；5其它）
         
-        self.CalDate = CalDate #所要计算的日期
+
         self.CleanPrice = CleanPrice #净价
 #        self.DirtyPrice = DirtyPrice #全价
         
@@ -303,7 +304,7 @@ class Bond_Profile:
         
         mid_index = pay_dates[1:].index(date_next)
         
-        if (df_i.iloc[0,-2]<caldate<=df_i.iloc[0,-1] and (self.BondType == 1 or self.BondType == 2)\
+        if (df_i.iloc[0,-2]<caldate<=df_i.iloc[0,-1] and (self.BondType == 1 or self.BondType == 2))\
                or ((self.BondType == 3 or self.BondType == 4) and
                           df_i.iloc[0,-1-self.Frequency]<=caldate<df_i.iloc[0,-1]):
             return ((self.FV()-self.PV())/self.PV())/((pay_dates[-1]-caldate)/df_i.iloc[4,-1])               
@@ -357,95 +358,101 @@ class Bond_Profile:
             #其它类型债券（分次兑付债券）
             pass
 
-    def duration(self,sdate):
+    def duration(self):
         '''久期'''
-        s_date = self.format_qldate(sdate)
+        caldate = self.format_qldate(self.CalDate)
         pay_dates = self.schedule()
-        date_last = self.date_process(sdate)['date_last']
-        date_next = self.date_process(sdate)['date_next']
-        unpay_date1 = self.date_process(sdate)['unpay_date1']
-        unpay_date2 = self.date_process(sdate)['unpay_date2']
-#        year_days = self.date_process(sdate)['year_days']
-        info_mat = self.info_matrix()
-        if (unpay_date2[-2]<s_date<=unpay_date2[-1] and (self.bondType == 1 or self.bondType == 2))\
-               or ((self.bondType == 4 or self.bondType == 5) and s_date>=unpay_date2[-1-self.frequency]):
+        date_pro = self.date_process()
+        date_last = date_pro['date_last']
+        date_next = date_pro['date_next']
+        unpay_date1 = date_pro['unpay_date1']
+        unpay_date2 = date_pro['unpay_date2']
+        df_i = self.info_df()
+        
+        mid_index = pay_dates[1:].index(date_next)
+        
+        if (unpay_date2[-2]<=caldate<unpay_date2[-1] and self.BondType == 1)\
+               or ((self.BondType == 3 or self.BondType == 4) and caldate>=unpay_date2[-1-self.Frequency]):
             try:
                 ql.Date(29,2,date_last.year())
             except RuntimeError:
                 try:
                     ql.Date(29,2,date_next.year())
                 except RuntimeError:
-                    return (pay_dates[-1]-s_date)/365
+                    return (pay_dates[-1]-caldate)/365
                 else:
                     if date_last<=ql.Date(29,2,date_next.year())<=date_next:
-                        return (pay_dates[-1]-s_date)/366
+                        return (pay_dates[-1]-caldate)/366
                     else:
-                        return (pay_dates[-1]-s_date)/365
+                        return (pay_dates[-1]-caldate)/365
             else:
                 if date_last<=ql.Date(29,2,date_last.year())<=date_next:
-                    return (pay_dates[-1]-s_date)/366
+                    return (pay_dates[-1]-caldate)/366
                 else:
-                    return (pay_dates[-1]-s_date)/365
-        elif (s_date<=unpay_date2[-2] and (self.bondType == 1 or self.bondType == 2)) or\
-               ((self.bondType == 4 or self.bondType == 5) and s_date<unpay_date2[-1-self.frequency]):
-            Ci = info_mat[1,pay_dates.index(date_next)]
-            f = self.frequency
-            w = (date_next-s_date)/(date_next-date_last)
+                    return (pay_dates[-1]-caldate)/365
+        elif (caldate<unpay_date2[-2] and self.BondType == 1) or\
+               ((self.BondType == 3 or self.BondType == 4) and caldate<unpay_date2[-1-self.Frequency]):
+            Ci = list(np.array(df_i.iloc[6,mid_index-1:-1])*np.array(df_i.loc['CouponRate',mid_index+1:]))
+            f = self.Frequency
+            w = (date_next-caldate)/(date_next-date_last)       
             n = len(unpay_date1)
-            y = self.YTM(sdate)
-            P = self.PV(sdate)
-            F = info_mat[0,pay_dates.index(date_next)]
+            y = self.YTM()
+            P = self.PV()
+            F = self.FaceAmount
             mid_res = 0
             for i in range(n):
-                mid_res += Ci/f*(w+i)/(1+y/f)**(w+i)
+                mid_res += Ci[i]/f*(w+i)/(1+y/f)**(w+i)
             return (mid_res+F*(w+n-1)/(1+y/f)**(w+n-1))/(f*P)
-        else:
+        elif self.BondType == 2:
+#            利率久期，利差久期
             pass
 
-    def  modified_duration(self,sdate):
+    def  modified_duration(self):
         '''修正久期'''
-        D = self.duration(sdate)
-        y = self.YTM(sdate)
-        f = self.frequency
+        D = self.duration()
+        y = self.YTM()
+        f = self.Frequency
         return D/(1+y/f)
-
-    def convexity(self,sdate):
+    
+    def convexity(self):
         '''凸性'''
-        s_date = self.format_qldate(sdate)
-        info_mat = self.info_matrix()
+        caldate = self.format_qldate(self.CalDate)
+        date_pro = self.date_process()
         pay_dates = self.schedule()
-        date_last = self.date_process(sdate)['date_last']
-        date_next = self.date_process(sdate)['date_next']
-        unpay_date1 = self.date_process(sdate)['unpay_date1']
-        unpay_date2 = self.date_process(sdate)['unpay_date2']
+        date_last = date_pro['date_last']
+        date_next = date_pro['date_next']
+        unpay_date1 = date_pro['unpay_date1']
+        unpay_date2 = date_pro['unpay_date2']
+        df_i = self.info_df()
         
-        y = self.YTM(sdate)
-        d = unpay_date1[-1]-s_date
-        TY = self.date_process(sdate)['year_days']
-        t = d/TY
+        mid_index = pay_dates[1:].index(date_next)
         
-        Ci = info_mat[1,pay_dates.index(date_next)]
-        f = self.frequency
-        w = (date_next-s_date)/(date_next-date_last)
-        n = len(unpay_date1)
-        P = self.PV(sdate)
-        F = info_mat[0,pay_dates.index(date_next)]
-        
-        if (unpay_date2[-2]<s_date<=unpay_date2[-1] and (self.bondType == 1 or self.bondType == 2))\
-               or ((self.bondType == 4 or self.bondType == 5) and s_date>=unpay_date2[-1-self.frequency]):
+        y = self.YTM()
+        if (unpay_date2[-2]<caldate<=unpay_date2[-1] and self.BondType == 1)\
+               or ((self.BondType == 3 or self.BondType == 4) and caldate>unpay_date2[-1-self.Frequency]):
+            d = unpay_date1[-1]-caldate
+            TY = df_i.iloc[4,-1]
+            t = d/TY
             return 2*(t**2)/((1+y*t)**2)
-        elif (s_date<=unpay_date2[-2] and (self.bondType == 1 or self.bondType == 2)) or\
-               ((self.bondType == 4 or self.bondType == 5) and s_date<unpay_date2[-1-self.frequency]):
+        elif (caldate<=unpay_date2[-2] and self.BondType == 1) or\
+               ((self.BondType == 3 or self.BondType == 4) and caldate<=unpay_date2[-1-self.Frequency]):
+            Ci = list(np.array(df_i.iloc[6,mid_index-1:-1])*np.array(df_i.loc['CouponRate',mid_index+1:]))
+            f = self.Frequency
+            w = (date_next-caldate)/(date_next-date_last)
+            n = len(unpay_date1)
+            P = self.PV()
+            F = self.FaceAmount
             mid_res = 0
             for i in range(n):
-                mid_res += (Ci/f)*(w+i)*(w+i+1)/(1+y/f)**(w+i)
+                mid_res += (Ci[i]/f)*(w+i)*(w+i+1)/(1+y/f)**(w+i)
             return (mid_res+F*(w+n-1)*(w+n)/(1+y/f)**(w+n-1))/((f**2)*P*((1+y/f)**2))
-        else:
+        elif self.BondType == 2:
+#            利率凸性，利差凸性
             pass
     
-    def bvalue(self,sdate):
+    def bvalue(self):
         '''基点价值'''
-        return self.modified_duration(sdate)*(10**(-4))*self.PV(sdate)
+        return self.modified_duration()*(10**(-4))*self.PV()
 
 #计算组合指标
 class Portfolio_Indacates:    
@@ -461,11 +468,11 @@ class Portfolio_Indacates:
     def matrix_info(cls,bond_list,bond_plus):
         mat_info = np.zeros(shape=(len(bond_list),5))
         for n in range(len(bond_list)):
-            bond_cls_tmp = Bond_Profile(*eval(bond_list[n])['bond_info'])
-            sdate_tmp = eval(bond_list[n])['date']
-            mduration_tmp = bond_cls_tmp.modified_duration(sdate_tmp)
-            convexity_tmp = bond_cls_tmp.convexity(sdate_tmp)
-            bvalue_tmp = bond_cls_tmp.bvalue(sdate_tmp)
+            bond_v = eval(bond_list[n])
+            bond_cls_tmp = Bond_Profile(bond_v['date'],*bond_v['bond_info'])
+            mduration_tmp = bond_cls_tmp.modified_duration()
+            convexity_tmp = bond_cls_tmp.convexity()
+            bvalue_tmp = bond_cls_tmp.bvalue()
             mat_info[n,:] = [bond_plus['market_value'][n],bond_plus['cost'][n],
                                          mduration_tmp,convexity_tmp,bvalue_tmp]
         res = cls((eval(bond_list[0])['bond_info'][0],eval(bond_list[1])['bond_info'][0]),*mat_info.T)
@@ -512,15 +519,15 @@ class indicates_result:
     @classmethod
     def single_bond(cls,bond):
         sdate = bond['date']
-        bond_cls = Bond_Profile(*bond['bond_info'])
-        bond_res = {'1-债券代码':bond_cls.code,
-                    '2-应计利息':bond_cls.accrued_interest(sdate),
-                    '3-债券全价':bond_cls.PV(sdate),
-                    '4-到期收益率':bond_cls.YTM(sdate),
-                    '5-久期':bond_cls.duration(sdate),
-                    '6-修正久期':bond_cls.modified_duration(sdate),
-                    '7-凸性':bond_cls.convexity(sdate),
-                    '8-基点价值':bond_cls.bvalue(sdate),
+        bond_cls = Bond_Profile(sdate,*bond['bond_info'])
+        bond_res = {'1-债券代码':bond_cls.Code,
+                    '2-应计利息':bond_cls.accrued_interest(),
+                    '3-债券全价':bond_cls.PV(),
+                    '4-到期收益率':bond_cls.YTM(),
+                    '5-久期':bond_cls.duration(),
+                    '6-修正久期':bond_cls.modified_duration(),
+                    '7-凸性':bond_cls.convexity(),
+                    '8-基点价值':bond_cls.bvalue(),
                     }
     
         return cls.dict_round(bond_res)
@@ -540,10 +547,12 @@ class indicates_result:
 
 if __name__=='__main__':
     #单个债券
-    bond1={'bond_info':('180210.IB',100,103.5811,'2018-07-06','2028-07-06',0.0404,1,1,0,'IB','zhongzhai'),
-       'date':'2019-01-11'}
-    bond2={'bond_info':('user_defined',100,98.5,'2010-01-01','2020-01-01',0.05,2,1,0,'IB','zhongzhai'),
-           'date':'2019-01-11'}
+    bond1 = {'bond_info':('180210.IB','2018-07-03',100,'IB','2018-07-06','2028-07-06',2,100,1,
+                        np.nan,np.nan,1,0.0404,np.nan,np.nan,1,3,103.5811,0,0),
+            'date':'2019-04-11'}
+    bond2 = {'bond_info':('user_defined','2010-01-01',98,'SSE','2010-01-01','2020-01-01',1,100,2,
+                        np.nan,np.nan,1,0.05,np.nan,np.nan,2,3,98.5,0,0),
+            'date':'2019-04-11'}
     
     print (indicates_result.single_bond(bond1))
     print (indicates_result.single_bond(bond2))
@@ -553,7 +562,6 @@ if __name__=='__main__':
     bond_plus = {'market_value':[500,380],'cost':[0.4,0.35]}
     
     print (indicates_result.port_bonds(bond_list,bond_plus))
-    
 
 
 
